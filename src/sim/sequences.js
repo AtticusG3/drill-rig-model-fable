@@ -3,7 +3,8 @@ import { LAYOUT as L } from '../layout.js';
 import {
   TAU, JOINT, STAND, STUMP_Y, SAVER, Q_SLIPS, Q_TRIP_LATCH, DRILL_TILT, PICK_TILT, BACK_TILT,
   smooth, lerp, clamp01, elevatorPoint, linkTiltMin, qForElevatorY, slotPos, nextFullSlot, nextEmptySlot,
-  RACK_PICK_LIST, troughFrame, troughPoint, PICK, makeTubularState, poseBottomFixed,
+  RACK_PICK_LIST, rackPipeX, rackLayerY, troughFrame, troughPoint, PICK, makeTubularState, poseBottomFixed,
+  MOUSE_Z, MOUSE_TILT, MOUSE_TOP_Y,
 } from './rigState.js';
 
 /*
@@ -235,11 +236,11 @@ function* pickStandFromSetback(slot) {
   }, { begin: (st) => { a0 = st.stand.axis.clone(); } });
 }
 
-function* rackStandBack(slot) {
+function* rackStandBack(slot, { lift = true, built = false } = {}) {
   const P = slotPos(slot);
   const B = new V3(P.x, L.setbackY, P.z);
   const R = STAND - L.elevatorSeat;
-  yield tween('Lift the stand clear of the stump', 1.2, { q: (st) => st.q + 0.3 });
+  if (lift) yield tween('Lift the stand clear of the stump', 1.2, { q: (st) => st.q + 0.3 });
   yield step('Floor crew walks the stand pin over to the setback', 3, (st, k) => {
     const e = smooth(k);
     const ax = (P.x / R) * e;
@@ -260,7 +261,7 @@ function* rackStandBack(slot) {
     poseBottomFixed(st.stand, B, hx, hz);
   }, {
     begin: (st) => { h0 = { x: st.stand.top.x, z: st.stand.top.z }; },
-    end: (st) => { st.setback[slot] = true; st.stand = null; st.standsRacked++; },
+    end: (st) => { st.setback[slot] = true; st.stand = null; if (built) st.standsBuilt++; else st.standsRacked++; },
   });
 }
 
@@ -365,11 +366,11 @@ export function* tripOutProgram(s) {
   }
 }
 
-/** Hoist the joint off the catwalk: pin slides up the trough, then is tailed in over the floor. */
-function hoistOffCatwalk() {
+/** Hoist the joint off the catwalk: pin slides up the trough, then is tailed in until it hangs plumb under the elevator. */
+function hoistOffCatwalk(tiltEnd) {
   const R = JOINT - L.elevatorSeat;
   const yEnd = PICK.endPoint.y;
-  const qHang = qForElevatorY(yEnd + R, 0);
+  const qHang = qForElevatorY(yEnd + R, tiltEnd);
   const f = troughFrame(1);
   const T = f.T.clone().addScaledVector(f.n, L.troughAxisOffset);
   const u = f.u.clone();
@@ -378,12 +379,12 @@ function hoistOffCatwalk() {
   const w = new V3();
   let left = false;
   return {
-    label: 'Hoist the joint off the catwalk — links retract, floorhand tails the pin end in',
+    label: 'Hoist the joint off the catwalk — links retract, floorhand tails the pin end in over the mousehole',
     duration: 8,
     begin() { left = false; },
     update(s, k) {
       s.q = lerp(PICK.q, qHang, smooth(k));
-      s.linkTilt = Math.max(PICK_TILT * (1 - smooth(clamp01(k / 0.65))), linkTiltMin(s.q));
+      s.linkTilt = Math.max(lerp(PICK_TILT, tiltEnd, smooth(clamp01(k / 0.65))), linkTiltMin(s.q));
       elevatorPoint(s.q, s.linkTilt, E);
       let onTrough = false;
       if (!left) {
@@ -410,39 +411,53 @@ function hoistOffCatwalk() {
   };
 }
 
+/* ---- pipe rack -> catwalk: the joint rolls along the rack and down the indexer arms ---- */
+const TJ_R = L.toolJointOD / 2;
+const ARM_X0 = rackPipeX(0, 0) - 0.2;                           // rack end of the sloping indexer arms
+const ARM_Y0 = rackLayerY(L.rackLayers - 1) - 0.08;
+const ARM_X1 = 0.95;                                            // catwalk end, above the trough edge
+const ARM_Y1 = 1.5;
+/** Height of the joint centreline while it rolls from the rack to the catwalk edge. */
+function rollY(x, rackY) {
+  if (x >= ARM_X0) return rackY;
+  const onArm = lerp(ARM_Y1, ARM_Y0, (x - ARM_X1) / (ARM_X0 - ARM_X1)) + 0.05 + TJ_R;
+  return Math.min(rackY, onArm) + Math.max(0, onArm - rackY) * smooth(clamp01((ARM_X0 - x) / 0.4));
+}
+
 /**
- * Pipe-handling mode: pick up a single joint from the pipe rack with the
- * hydraulic catwalk and the top-drive elevator, and add it to the string.
+ * One joint: pipe rack -> indexer arms -> catwalk trough -> V-door -> elevator,
+ * ending with the joint hanging plumb over the mousehole.
  */
-export function* pipeHandlingProgram(s) {
-  yield* toSlipsAndBreakOut(s);
-  if (s.rackPicked >= RACK_PICK_LIST.length) {
-    yield haltStep('No more joints on the catwalk side of the pipe rack — press Reset');
-    return;
-  }
+function* fetchJoint(s, { safePoint = false } = {}) {
   const item = RACK_PICK_LIST[s.rackPicked];
   const top0 = new V3(item.x, item.y, item.zc - JOINT / 2);
   const sTop0 = L.catwalkTailZ0 - top0.z;
-  const liftY = item.y + 0.7;
   const troughY0 = troughPoint(0, 0).y;
+  const edgeY = rollY(ARM_X1, item.y);
   const skateBehind = (sTop) => sTop - JOINT - 0.35;
+  // start angle chosen so the paint stripe lines up with the pipe already in the mousehole after make-up
+  const spin0 = (s.build ? s.build.spin : 0) - item.x / TJ_R;
 
-  yield step('Pipe kickers lift a joint off the rack', 1.5, (st, k) => {
-    st.single.top.y = lerp(item.y, liftY, smooth(k));
+  yield step('Rack indexer releases one joint — it rolls along the rack and across the arms to the catwalk', Math.max(2, (item.x - ARM_X1) / 1.1), (st, k) => {
+    const x = lerp(item.x, ARM_X1, smooth(k));
+    st.single.top.x = x;
+    st.single.top.y = rollY(x, item.y);
+    st.single.spin = spin0 + (item.x - x) / TJ_R;
   }, {
+    safePoint,
     begin: (st) => {
       st.single = makeTubularState(JOINT, top0, new V3(0, 0, 1));
       st.single.rackIndex = st.rackPicked;
+      st.single.spin = spin0;
       st.rackPicked++;
     },
   });
-  yield step('Joint rolls across the indexer arms to the catwalk', 2.5, (st, k) => {
-    const x = lerp(item.x, 0, smooth(k));
+  yield step('Kicker arms tip the joint over the edge into the catwalk trough', 1.4, (st, k) => {
+    const e = smooth(k);
+    const x = lerp(ARM_X1, 0, e);
     st.single.top.x = x;
-    st.single.spin = (item.x - x) / (L.toolJointOD / 2);
-  });
-  yield step('Kickers lower the joint into the catwalk trough', 1.2, (st, k) => {
-    st.single.top.y = lerp(liftY, troughY0, smooth(k));
+    st.single.top.y = lerp(edgeY, troughY0, e) + 0.28 * Math.sin(Math.PI * Math.min(1, k * 1.4)) * (1 - e);
+    st.single.spin = spin0 + (item.x - x) / TJ_R;
   }, { end: (st) => { st.single.attach = 'trough'; st.single.s = sTop0; } });
 
   let q0 = 0;
@@ -453,7 +468,7 @@ export function* pipeHandlingProgram(s) {
     duration: 6,
     begin(st) {
       q0 = st.q;
-      t0 = Math.max(0, st.linkTilt);
+      t0 = st.linkTilt;
       sk0 = st.skateS;
       this.duration = Math.max(6, Math.abs(PICK.q - q0) / H);
     },
@@ -462,21 +477,118 @@ export function* pipeHandlingProgram(s) {
       st.catwalk = k;
       st.skateS = lerp(sk0, skateBehind(sTop0), e);
       st.q = lerp(q0, PICK.q, e);
-      st.linkTilt = lerp(t0, PICK_TILT, e);
+      // coming down from the racking board the links first return to vertical, then tilt out to the V-door
+      if (t0 < 0) st.linkTilt = k < 0.25 ? lerp(t0, 0, smooth(k / 0.25)) : lerp(0, PICK_TILT, smooth((k - 0.25) / 0.75));
+      else st.linkTilt = lerp(t0, PICK_TILT, e);
       st.elevator = 0;
     },
   };
-  yield step('Catwalk skate pushes the joint up the trough onto the drill floor', 4, (st, k) => {
+  yield step('Catwalk skate pushes the joint up the trough until the box end is in the elevator', 4, (st, k) => {
     st.single.s = lerp(sTop0, PICK.sTop, smooth(k));
     st.skateS = skateBehind(st.single.s);
   });
   yield tween('Close and latch the elevator below the box tool joint', 1, { elevator: 1 }, {
     end: (st) => { st.single.latched = true; st.single.attach = 'none'; },
   });
-  yield hoistOffCatwalk();
+  yield hoistOffCatwalk(MOUSE_TILT);
   yield tween('Catwalk lowers the trough and retracts the skate', 4, { catwalk: 0, skateS: 2 });
-  yield* stabAndSpinIn('single', 'Iron roughneck spins in the new joint');
-  yield* makeUpTopDriveTo('single');
-  yield tween('Open the elevator', 1, { elevator: 0 });
-  yield pullSlips();
+}
+
+/** Make up the hanging joint onto the pipe standing in the mousehole. */
+function* makeUpInMousehole() {
+  yield tween('Stab the pin into the box of the pipe in the mousehole', 0, { q: () => qForElevatorY(MOUSE_TOP_Y + JOINT - L.elevatorSeat, MOUSE_TILT) }, {
+    speed: 1, minDur: 1.5,
+    end: (st) => {
+      const t = st.single;
+      t.attach = 'none';
+      t.latched = false;      // weight on the mousehole; the closed elevator only steadies the joint
+      t.top.set(0, MOUSE_TOP_Y + JOINT, MOUSE_Z);
+      t.axis.copy(DOWN);
+    },
+  });
+  yield tween('Iron roughneck slews and extends to the mousehole', 2, { roughneck: 1, roughneckSwing: 1 });
+  yield spin('Iron roughneck spins in the connection', 2.5, 4.92, (st, d) => { st.single.spin += d; st.roughneckSpin += d * 4; });
+  yield spin('Torque wrench makes up the connection to torque', 1, 0.08, (st, d) => { st.single.spin += d; });
+  yield tween('Iron roughneck retracts and parks', 2, { roughneck: 0, roughneckSwing: 0 });
+}
+
+/**
+ * Pipe-handling mode on a triple rig: build stands in the mousehole from
+ * singles off the pipe rack and rack them in the fingerboard.
+ *   joint 1 -> mousehole; joint 2 made up on it (double) -> lowered into the
+ *   deep mousehole; joint 3 made up (triple) -> pulled, swung to the setback
+ *   and racked by the derrickman.
+ * The drill string stays in the slips with the top drive broken out.
+ */
+export function* buildStandsProgram(s) {
+  yield* toSlipsAndBreakOut(s);
+  const qLanded = qForElevatorY(MOUSE_TOP_Y - L.elevatorSeat, MOUSE_TILT);
+  while (true) {
+    const slot = nextEmptySlot(s);
+    if (slot < 0) {
+      yield haltStep('Setback full — no room to rack another stand. Drill some stands down first');
+      return;
+    }
+    if (s.rackPicked + L.standJoints > RACK_PICK_LIST.length) {
+      yield haltStep('Not enough joints left on the catwalk side of the pipe rack for a stand — press Reset');
+      return;
+    }
+
+    /* ---- joint 1: into the mousehole ---- */
+    yield* fetchJoint(s, { safePoint: true });
+    yield tween('Lower the joint into the mousehole', 0, { q: qLanded }, { speed: 1.5, minDur: 2 });
+    yield tween('Joint landed in the mousehole — open the elevator', 1, { elevator: 0 }, {
+      begin: (st) => {
+        const t = st.single;
+        t.attach = 'mousehole';
+        t.latched = false;
+        t.top.set(0, MOUSE_TOP_Y, MOUSE_Z);
+        t.axis.copy(DOWN);
+        st.build = t;
+        st.single = null;
+      },
+    });
+
+    /* ---- joint 2: make a double, lower it into the deep mousehole ---- */
+    yield* fetchJoint(s);
+    yield* makeUpInMousehole();
+    yield step('Double made up — elevator takes the weight', 0.8, noop, {
+      begin: (st) => {
+        const b = st.build;
+        b.len += JOINT;
+        b.top.copy(st.single.top);
+        b.spin = st.single.spin;
+        b.attach = 'elevator';
+        b.latched = true;
+        st.single = null;
+      },
+    });
+    yield tween('Lower the double into the mousehole', 0, { q: qLanded }, { speed: 1.5, minDur: 3 });
+    yield tween('Double landed — open the elevator', 1, { elevator: 0 }, {
+      begin: (st) => { st.build.attach = 'mousehole'; st.build.latched = false; st.build.top.set(0, MOUSE_TOP_Y, MOUSE_Z); },
+    });
+
+    /* ---- joint 3: make the triple, pull it and rack it back ---- */
+    yield* fetchJoint(s);
+    yield* makeUpInMousehole();
+    yield step('Triple stand made up — elevator takes the weight', 0.8, noop, {
+      begin: (st) => {
+        const t = makeTubularState(STAND, st.single.top, DOWN);
+        t.spin = st.single.spin;
+        t.attach = 'elevator';
+        t.latched = true;
+        t.slot = slot;
+        st.stand = t;
+        st.build = null;
+        st.single = null;
+      },
+    });
+    const seatClear = STUMP_Y + 0.25 + STAND - L.elevatorSeat;       // elevator height with the pin 0.25 m above the stump
+    yield tween('Pull the stand out of the mousehole', 0, { q: qForElevatorY(seatClear, MOUSE_TILT) }, { speed: H, minDur: 4 });
+    yield step('Link tilt brings the stand back to well centre, above the stump', 2.5, (st, k) => {
+      st.linkTilt = lerp(MOUSE_TILT, 0, smooth(k));
+      st.q = qForElevatorY(seatClear, st.linkTilt);
+    });
+    yield* rackStandBack(slot, { lift: false, built: true });
+  }
 }

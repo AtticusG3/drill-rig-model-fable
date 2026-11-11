@@ -19,6 +19,9 @@ export const DRILL_TILT = L.drillDownTiltDeg * DEG;
 export const PICK_TILT = L.pickupTiltDeg * DEG;
 export const BACK_TILT = L.backTiltDeg * DEG;
 export const SLOT_COUNT = L.setbackXs.length * L.setbackZs.length;
+export const MOUSE_Z = L.mousehole[2];
+export const MOUSE_TILT = Math.asin(MOUSE_Z / L.linkLength);   // link tilt that puts the elevator over the mousehole
+export const MOUSE_TOP_Y = STUMP_Y;                            // box of the joint landed in the mousehole: same working height as the stump
 
 export const smooth = (k) => k * k * (3 - 2 * k);
 export const lerp = (a, b, k) => a + (b - a) * k;
@@ -191,17 +194,19 @@ export function createState() {
     pumpsOn: false,
     stand: null,
     single: null,
+    build: null,             // joint or double standing in the mousehole while a stand is built
     catwalk: 0,              // trough raise progress 0..1
     skateS: 6,               // skate position along the trough (from tail)
     roughneck: 0,            // 0 parked .. 1 at well centre
     roughneckSpin: 0,
+    roughneckSwing: 0,       // 0 facing well centre .. 1 slewed and extended to the mousehole
     setback,
     rackPicked: 0,
     label: 'Idle',
     halt: null,
     connections: 0,
     standsRacked: 0,
-    singlesAdded: 0,
+    standsBuilt: 0,
     drilled: 0,
   };
 }
@@ -218,7 +223,7 @@ export function deriveState(s) {
   elevatorPoint(s.q, s.linkTilt, _E);
   if (s.connected) s.stringTopY = s.q - SAVER;
   else if (s.stringInElevator) s.stringTopY = _E.y + L.elevatorSeat;
-  for (const t of [s.stand, s.single]) {
+  for (const t of [s.stand, s.single, s.build]) {
     if (t && t.attach === 'elevator') t.top.copy(_E).addScaledVector(t.axis, -L.elevatorSeat);
     if (t && t.attach === 'trough') {
       troughPoint(s.catwalk, t.s, t.top);

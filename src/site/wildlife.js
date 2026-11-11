@@ -33,6 +33,7 @@ const COATS = {
     { body: mat(0x2a2422), mane: mat(0x141110) },   // black
   ],
 };
+const UNLIT = [];      // unlit materials that must be dimmed by hand at night
 const HOOF = mat(0x2a2420);
 const HORN = mat(0xd8d0bc);
 
@@ -262,6 +263,7 @@ function buildTumbleweed() {
   const g = new THREE.Group();
   const twig = new THREE.LineBasicMaterial({ color: 0x8a744e });
   const twig2 = new THREE.LineBasicMaterial({ color: 0xb09a6c });
+  for (const m of [twig, twig2]) UNLIT.push({ m, base: m.color.clone() });
   // irregular twig ball: jitter each vertex radially (same offset for coincident vertices)
   const ragged = (geom, amount, seed) => {
     const p = geom.attributes.position;
@@ -429,5 +431,12 @@ export function buildWildlife(particles) {
   }
   update(0, 0);
 
-  return { group, update, herds, weeds, birds };
+  function setDaylight(f) {
+    const k = 0.06 + 0.94 * f;
+    for (const u of UNLIT) u.m.color.copy(u.base).multiplyScalar(k);
+    blobs.material.opacity = 0.32 * f;
+    for (const b of birds) b.group.visible = f > 0.35;      // kites roost at night
+  }
+
+  return { group, update, herds, weeds, birds, setDaylight };
 }

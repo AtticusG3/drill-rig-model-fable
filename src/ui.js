@@ -4,6 +4,7 @@ import { MODES } from './animations.js';
 import { setWireframe } from './materials.js';
 import { runValidation } from './validation.js';
 import { RACK_PICK_LIST } from './sim/rigState.js';
+import { formatTime } from './site/dayNight.js';
 
 function el(tag, cls, html) {
   const e = document.createElement(tag);
@@ -94,7 +95,7 @@ export function createUI({ animator, rig, cameraRig, labels, renderer }) {
   rigSec.append(mode.row, hoist.row, rpm.row, speed.row);
 
   const btnRot = button('Start rotation', () => { animator.toggleRotation(); sync(); });
-  const btnPipe = button('Start pipe transfer', () => { animator.startTransfer(); sync(); });
+  const btnPipe = button('Build stands', () => { animator.startTransfer(); sync(); });
   const btnPause = button('Pause', () => { animator.paused = !animator.paused; sync(); });
   const btnReset = button('Reset', () => { animator.reset(); sync(); });
   const btns = el('div', 'btn-row');
@@ -121,6 +122,10 @@ export function createUI({ animator, rig, cameraRig, labels, renderer }) {
     if (p) cameraRig.flyTo(p);
   });
   viewSec.append(cam.row);
+  const dn = rig.dayNight;
+  const tod = slider('Time of day', 0, 24, 0.25, dn.state.time, (v) => { dn.setTime(v); return v; }, formatTime);
+  viewSec.append(tod.row);
+  viewSec.append(checkbox('Day / night cycle (24 h in 10 min)', dn.state.auto, (on) => { dn.state.auto = on; }));
   viewSec.append(checkbox('Show structural bracing', true, (on) => { rig.mast.bracing.visible = on; rig.sub.bracing.visible = on; }));
   viewSec.append(checkbox('Show drill string', true, (on) => { rig.string.group.visible = on; }));
   viewSec.append(checkbox('Show mud system', true, (on) => { rig.mud.group.visible = on; }));
@@ -148,13 +153,97 @@ export function createUI({ animator, rig, cameraRig, labels, renderer }) {
   siteSec.append(siteLine);
   body.append(siteSec);
 
+  /* ---------------- Live telemetry ---------------- */
+  const live = rig.live;
+  const liveSec = el('div', 'section');
+  liveSec.append(el('h2', null, 'Live Telemetry'));
+  const urlInput = el('input', 'text');
+  urlInput.type = 'text';
+  urlInput.spellcheck = false;
+  let savedUrl = null;
+  try { savedUrl = localStorage.getItem('rigTelemetryUrl'); } catch { /* storage unavailable */ }
+  urlInput.value = savedUrl || 'ws://localhost:8787';
+  const urlRow = el('div', 'row');
+  urlRow.append(urlInput);
+  const btnConn = button('Connect', () => {
+    if (live.client.state === 'disconnected') {
+      const url = urlInput.value.trim();
+      try { localStorage.setItem('rigTelemetryUrl', url); } catch { /* storage unavailable */ }
+      live.client.connect(url);
+      animator.setMode('live');
+    } else {
+      live.client.disconnect();
+    }
+    sync();
+  });
+  urlRow.append(btnConn);
+  liveSec.append(urlRow);
+  const liveLine = el('div', 'status-line', 'Not connected. Run "npm run telemetry" for a simulated rig feed, then Connect.');
+  liveSec.append(liveLine);
+  const tele = el('div', 'tele');
+  const teleRows = {};
+  for (const [key, label] of [['blockHeight', 'Block height'], ['rpm', 'String RPM'], ['slips', 'Slips'], ['hookload', 'Hookload'], ['wob', 'Weight on bit'], ['torque', 'Torque'], ['spp', 'Standpipe pressure'], ['flow', 'Flow in'], ['bitDepth', 'Bit depth'], ['holeDepth', 'Hole depth']]) {
+    const row = el('div', 'row');
+    const v = el('span', 'q-missing', '–');
+    row.append(el('span', null, label), v);
+    teleRows[key] = v;
+    tele.append(row);
+  }
+  liveSec.append(tele);
+  const flagBox = el('div', 'tele-flags');
+  liveSec.append(flagBox);
+  body.append(liveSec);
+
+  function updateLive(now) {
+    const c = live.client;
+    btnConn.textContent = c.state === 'disconnected' ? 'Connect' : 'Disconnect';
+    btnConn.classList.toggle('active', c.state !== 'disconnected');
+    const inLive = animator.mode === 'live';
+    const snap = inLive && live.driver.snap ? live.driver.snap : live.validator.snapshot(now);
+    let text;
+    let cls = '';
+    if (c.state === 'disconnected') {
+      text = c.lastError ? `Not connected. ${c.lastError}.` : 'Not connected. Run "npm run telemetry" for a simulated rig feed, then Connect.';
+    } else if (c.state === 'connecting') {
+      text = `Connecting to ${c.url}…`;
+    } else if (c.state === 'retrying') {
+      text = 'Connection closed — retrying…';
+      cls = 'warn';
+    } else if (snap.link === 'none') {
+      text = 'Connected — waiting for the first valid message.';
+    } else if (snap.link === 'live') {
+      text = `LIVE  ${c.rate.toFixed(1)} msg/s · ${snap.stats.rejectedValues} values rejected · ${snap.stats.clampedValues} clamped · ${snap.stats.dropped + snap.stats.malformed} frames dropped`;
+      cls = 'ok';
+    } else {
+      text = snap.link === 'stale' ? `STALE  no valid data for ${(snap.ageMs / 1000).toFixed(0)} s — holding` : `LOST  no data for ${(snap.ageMs / 1000).toFixed(0)} s — position held`;
+      cls = 'warn';
+    }
+    if (c.state === 'open' && !inLive) text += ' Mode is not Live: the model is not following the feed.';
+    liveLine.textContent = text;
+    liveLine.className = `status-line ${cls}`;
+    for (const [key, span] of Object.entries(teleRows)) {
+      if (key === 'slips') {
+        span.textContent = snap.link === 'none' ? '–' : `${snap.slips ? 'SET' : 'out'}${snap.slipsSource === 'reported' ? '' : ` (${snap.slipsSource})`}`;
+        span.className = snap.link === 'none' ? 'q-missing' : snap.slipsSource === 'reported' ? 'q-good' : snap.slipsSource === 'inferred' ? 'q-clamped' : 'q-held';
+        continue;
+      }
+      const ch = snap.channels[key];
+      span.textContent = ch.value === null ? '–' : `${ch.value.toFixed(ch.digits)} ${ch.unit}`;
+      span.className = `q-${ch.quality}`;
+      span.title = ch.note || ch.quality;
+    }
+    const flags = [...snap.flags, ...live.driver.activeFlags(now)].slice(0, 6);
+    flagBox.innerHTML = '';
+    for (const f of flags) flagBox.append(el('div', `flag ${f.severity}`, f.text));
+  }
+
   /* ---------------- Diagnostics ---------------- */
   const diagSec = el('div', 'section diag');
   diagSec.append(el('h2', null, 'Diagnostics'));
   const fields = {};
   for (const [key, label] of [
     ['fps', 'FPS'], ['tris', 'Triangles'], ['calls', 'Draw calls'], ['hoist', 'Hoist position'], ['rpm', 'Drill string RPM'],
-    ['mode', 'Mode'], ['string', 'String held by'], ['setback', 'Stands in setback'], ['rack', 'Joints left (catwalk row)'], ['conn', 'Connections / racked / singles'], ['traffic', 'Site traffic'],
+    ['mode', 'Mode'], ['string', 'String held by'], ['setback', 'Stands in setback'], ['rack', 'Joints left (catwalk row)'], ['conn', 'Connections / racked / built'], ['traffic', 'Site traffic'],
   ]) {
     const row = el('div', 'row');
     const v = el('span', null, '–');
@@ -221,8 +310,13 @@ export function createUI({ animator, rig, cameraRig, labels, renderer }) {
       fields.string.textContent = s.connected ? (s.slips > 0.5 ? 'top drive + slips' : 'top drive') : s.stringInElevator ? 'elevator' : 'slips';
       fields.setback.textContent = `${s.setback.filter(Boolean).length} / ${s.setback.length}`;
       fields.rack.textContent = `${RACK_PICK_LIST.length - s.rackPicked}`;
-      fields.conn.textContent = `${s.connections} / ${s.standsRacked} / ${s.singlesAdded}`;
+      fields.conn.textContent = `${s.connections} / ${s.standsRacked} / ${s.standsBuilt}`;
       fields.traffic.textContent = rig.traffic.state.status;
+      updateLive(now);
+      if (document.activeElement !== tod.input) {
+        tod.input.value = dn.state.time;
+        tod.val.textContent = formatTime(dn.state.time);
+      }
       sync();
     }
   }

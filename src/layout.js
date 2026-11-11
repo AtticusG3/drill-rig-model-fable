@@ -68,8 +68,9 @@ export const LAYOUT = Object.freeze({
   // Driller cabin
   cabinPos: [-6.0, 8.0, 2.0],
 
-  // Mousehole
-  mousehole: [1.0, 8.0, 3.0],
+  // Stand-building mousehole: on the well-centre line toward the V-door so the link tilt can reach it.
+  // Deep enough (cased into the ground) to take a double while the third joint is made up.
+  mousehole: [0, 8.0, 2.0],
 
   // Iron roughneck rail (+X side of the rotary)
   roughneckReach: 2.1,

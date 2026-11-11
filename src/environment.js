@@ -34,6 +34,12 @@ function makeSkyMaterial({ sunIntensity = 10 } = {}) {
       time: { value: 0 },
       wind: { value: new THREE.Vector2(WIND.x, WIND.z) },
       cloudAmount: { value: 0.46 },
+      sunVis: { value: 1 },
+      night: { value: 0 },
+      moonDir: { value: new THREE.Vector3(0, -1, 0) },
+      glow: { value: 0 },
+      glowColor: { value: new THREE.Color(0xff8a3c) },
+      cloudTint: { value: new THREE.Color(1, 1, 1) },
     },
     vertexShader: `
       varying vec3 vDir;
@@ -45,6 +51,7 @@ function makeSkyMaterial({ sunIntensity = 10 } = {}) {
       uniform vec3 zenith; uniform vec3 horizon; uniform vec3 haze; uniform vec3 groundCol;
       uniform vec3 sunDir; uniform vec3 sunColor; uniform float sunIntensity;
       uniform float time; uniform vec2 wind; uniform float cloudAmount;
+      uniform float sunVis; uniform float night; uniform vec3 moonDir; uniform float glow; uniform vec3 glowColor; uniform vec3 cloudTint;
       varying vec3 vDir;
       float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float noise(vec2 p) {
@@ -61,16 +68,31 @@ function makeSkyMaterial({ sunIntensity = 10 } = {}) {
         float h = max(d.y, 0.0);
         vec3 col = mix(horizon, zenith, pow(h, 0.5));
         col = mix(col, haze, smoothstep(0.11, 0.0, d.y) * 0.78);
+        // sunrise / sunset glow toward the sun's azimuth
+        float az = pow(max(dot(normalize(d.xz + 1e-5), normalize(sunDir.xz + 1e-5)), 0.0), 2.0);
+        col = mix(col, glowColor, glow * az * smoothstep(0.42, 0.0, d.y));
+        float cover = 0.0;
         if (d.y > 0.015) {
           vec2 uv = d.xz / (d.y + 0.14) * 1.5 - wind * time * 0.012;
           float n = fbm(uv);
           float c = smoothstep(1.0 - cloudAmount, 1.0 - cloudAmount + 0.26, n);
           float shade = smoothstep(0.25, 0.85, fbm(uv * 2.7 + 9.0));
           vec3 cc = mix(vec3(0.74, 0.77, 0.83), vec3(1.0, 0.99, 0.97), shade);
-          col = mix(col, cc, c * smoothstep(0.015, 0.2, d.y) * 0.92);
+          cover = c * smoothstep(0.015, 0.2, d.y) * 0.92;
+          col = mix(col, cc * cloudTint, cover);
         }
         float sd = max(dot(d, sunDir), 0.0);
-        col += sunColor * (pow(sd, 2200.0) * sunIntensity + pow(sd, 90.0) * 0.22 + pow(sd, 10.0) * 0.07);
+        col += sunColor * sunVis * (pow(sd, 2200.0) * sunIntensity + pow(sd, 90.0) * 0.22 + pow(sd, 10.0) * 0.07);
+        if (night > 0.01 && d.y > 0.0) {
+          // stars: one candidate per cell of a 3D grid sampled on the sky sphere
+          vec3 p = d * 170.0;
+          vec3 ip = floor(p);
+          float hs = fract(sin(dot(ip, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+          float star = step(0.986, hs) * smoothstep(0.38, 0.0, length(fract(p) - 0.5));
+          col += vec3(0.9, 0.93, 1.0) * star * night * (1.0 - cover) * (0.35 + 0.65 * fract(hs * 91.7)) * smoothstep(0.0, 0.12, d.y);
+          float md = max(dot(d, moonDir), 0.0);
+          col += vec3(0.92, 0.95, 1.0) * night * (1.0 - cover * 0.7) * (smoothstep(0.99975, 0.99990, md) * 1.6 + pow(md, 260.0) * 0.1);
+        }
         col = mix(col, groundCol, smoothstep(0.0, -0.06, d.y));
         gl_FragColor = vec4(col, 1.0);
         #include <tonemapping_fragment>
@@ -85,7 +107,7 @@ export function makeSkyEnvScene() {
   const m = makeSkyMaterial({ sunIntensity: 3 });
   m.uniforms.groundCol.value.set(0x7d6a5f);
   s.add(new THREE.Mesh(new THREE.SphereGeometry(50, 32, 16), m));
-  return s;
+  return { scene: s, material: m };
 }
 
 /* ------------------------------------------------------------------ */
@@ -625,5 +647,5 @@ export function buildEnvironment() {
     wheel.rotation.z -= dt * (2.2 + Math.sin(t * 0.3) * 0.7);
   }
 
-  return { group: g, update, treeSpots };
+  return { group: g, update, treeSpots, skyMat };
 }

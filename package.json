@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check": "node scripts/check.mjs",
+    "check": "node scripts/check.mjs && node scripts/telemetry-check.mjs",
+    "telemetry": "node scripts/telemetry-sim.mjs",
     "smoke": "node scripts/site-smoke.mjs"
   },
   "dependencies": {

@@ -80,11 +80,14 @@ export function createScene(container) {
 
   // Image-based lighting baked from the procedural sky (blue above, red earth below)
   // so steel reflects the real surroundings. Call once the sky exists.
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  let envTarget = null;
   function setEnvironmentFrom(envScene) {
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmrem.fromScene(envScene, 0.03, 0.1, 200).texture;
+    const target = pmrem.fromScene(envScene, 0.03, 0.1, 200);
+    scene.environment = target.texture;
     scene.environmentIntensity = 0.85;
-    pmrem.dispose();
+    if (envTarget) envTarget.dispose();
+    envTarget = target;
   }
 
   const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.5, 2500);
@@ -133,5 +136,5 @@ export function createScene(container) {
   }
   window.addEventListener('resize', resize);
 
-  return { renderer, labelRenderer, scene, camera, controls, sun, cameraRig, resize, setEnvironmentFrom };
+  return { renderer, labelRenderer, scene, camera, controls, sun, hemi, ambient, cameraRig, resize, setEnvironmentFrom };
 }

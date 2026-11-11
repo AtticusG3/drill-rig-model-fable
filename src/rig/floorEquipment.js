@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { MATERIALS } from '../materials.js';
 import { LAYOUT } from '../layout.js';
 import { box, cyl, cylX, makeTubular, poseTubular, v3 } from '../geometry.js';
-import { SLOT_COUNT, STAND, slotPos } from '../sim/rigState.js';
+import { SLOT_COUNT, STAND, slotPos, MOUSE_Z } from '../sim/rigState.js';
 
 const DOWN = new THREE.Vector3(0, -1, 0);
 
@@ -44,7 +44,9 @@ export function buildFloorEquipment() {
   const carriage = new THREE.Group();
   carriage.add(box(1.1, 0.4, 0.9, MATERIALS.topDriveYellow, 0, L.floorY + 0.28, 0));       // base on the track
   carriage.add(box(0.4, 1.0, 0.45, MATERIALS.topDriveYellow, 0.25, L.floorY + 0.95, 0));   // column
-  carriage.add(box(L.roughneckReach - 0.25, 0.22, 0.32, MATERIALS.topDriveYellow, -(L.roughneckReach - 0.25) / 2 + 0.1, L.floorY + 1.15, 0)); // arm
+  const arm = box(1, 0.22, 0.32, MATERIALS.topDriveYellow, 0, L.floorY + 1.15, 0);                // telescoping arm (scaled in update)
+  carriage.add(arm);
+  carriage.add(cyl(0.3, 0.3, 0.16, MATERIALS.topDriveDark, 18, 0.25, L.floorY + 0.5, 0));           // slew ring
   carriage.add(box(0.3, 0.5, 0.5, MATERIALS.motorGrey, 0.55, L.floorY + 0.75, 0));         // hydraulic power pack
   // head: C-frame open toward -X, centred at x = -reach
   const head = new THREE.Group();
@@ -82,6 +84,8 @@ export function buildFloorEquipment() {
   group.add(box(2.8, 0.05, 0.9, MATERIALS.rigMat, 0, L.floorY + 0.025, -2.18));
   group.add(setback);
 
+  const swingAngle = Math.atan2(MOUSE_Z, L.roughneckWorkX);
+  const mouseReach = Math.hypot(MOUSE_Z, L.roughneckWorkX);
   const _top = new THREE.Vector3();
   return {
     group,
@@ -100,6 +104,13 @@ export function buildFloorEquipment() {
       }
       // roughneck carriage
       carriage.position.x = THREE.MathUtils.lerp(L.roughneckParkX, L.roughneckWorkX, s.roughneck);
+      // slew toward the mousehole and extend the arm to reach it
+      const sw = s.roughneckSwing || 0;
+      carriage.rotation.y = swingAngle * sw;
+      const reach = THREE.MathUtils.lerp(L.roughneckReach, mouseReach, sw);
+      head.position.x = -reach;
+      arm.scale.x = reach - 0.25;
+      arm.position.x = -(reach - 0.25) / 2 + 0.1;
       for (const ro of rollers) ro.rotation.y = s.roughneckSpin;
       // setback stands
       for (let i = 0; i < SLOT_COUNT; i++) {

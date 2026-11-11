@@ -194,9 +194,11 @@ export function buildSubstructure() {
   cabin.add(box(0.8, 0.5, 0.8, MATERIALS.galvanised, cx - 0.6, cy + ch + 0.55, cz - 0.6));
   group.add(cabin);
 
-  /* ---- Mousehole for the transferred joint ---- */
+  /* ---- Stand-building mousehole: scabbard through the floor and down into the ground ---- */
   const [mx, my, mz] = L.mousehole;
-  group.add(cyl(0.2, 0.2, 0.8, MATERIALS.topDriveDark, 16, mx, my + 0.15, mz));
+  group.add(cyl(0.2, 0.2, 0.7, MATERIALS.topDriveDark, 16, mx, my + 0.2, mz));
+  group.add(cyl(0.24, 0.24, 0.08, MATERIALS.safetyYellow, 16, mx, my + 0.57, mz));
+  group.add(cyl(0.15, 0.15, my, MATERIALS.subSteel, 12, mx, my / 2, mz));
 
   /* ---- Equipment storage / tool boxes on the floor ---- */
   group.add(box(2.2, 1.0, 1.0, MATERIALS.containerRust, 5.0, y + 0.5, -5.2));

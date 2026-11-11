@@ -171,6 +171,14 @@ export function buildPipeHandling() {
   single.name = 'TransferJoint';
   single.visible = false;
   group.add(single);
+  // the joint / double standing in the mousehole while a stand is built
+  const buildMeshes = [1, 2].map((n) => {
+    const m = makeTubular(JOINT * n, { jointSpacing: JOINT, od: L.pipeOD, tjOD: L.toolJointOD });
+    m.name = n === 1 ? 'MouseholeJoint' : 'MouseholeDouble';
+    m.visible = false;
+    group.add(m);
+    return m;
+  });
 
   const frame = troughFrame(0);
   const _w = new THREE.Vector3();
@@ -204,6 +212,11 @@ export function buildPipeHandling() {
     } else {
       single.visible = false;
     }
+    buildMeshes.forEach((m, i) => {
+      const show = !!s.build && Math.round(s.build.len / JOINT) === i + 1;
+      m.visible = show;
+      if (show) poseTubular(m, s.build.top, s.build.axis, s.build.spin);
+    });
   }
 
   return { group, racks, catwalk, trough, single, update, setPicked };

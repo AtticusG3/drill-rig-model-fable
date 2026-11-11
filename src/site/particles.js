@@ -29,7 +29,7 @@ export class ParticleSystem {
     this.material = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
-      uniforms: { uScale: { value: 1000 } },
+      uniforms: { uScale: { value: 1000 }, uLight: { value: 1 } },
       vertexShader: `
         attribute float aSize; attribute float aAlpha; attribute vec3 aColor;
         uniform float uScale;
@@ -41,12 +41,13 @@ export class ParticleSystem {
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: `
+        uniform float uLight;
         varying float vAlpha; varying vec3 vColor;
         void main() {
           float d = length(gl_PointCoord - 0.5) * 2.0;
           float a = smoothstep(1.0, 0.15, d) * vAlpha;
           if (a < 0.004) discard;
-          gl_FragColor = vec4(vColor, a);
+          gl_FragColor = vec4(vColor * uLight, a);
           #include <tonemapping_fragment>
           #include <colorspace_fragment>
         }`,

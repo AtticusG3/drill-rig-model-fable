@@ -2,13 +2,14 @@ import * as THREE from 'three';
 import { LAYOUT } from './layout.js';
 import { createState, deriveState, SAVER } from './sim/rigState.js';
 import { Sequencer, tickRotation } from './sim/sequencer.js';
-import { idleProgram, drillingProgram, tripOutProgram, pipeHandlingProgram } from './sim/sequences.js';
+import { idleProgram, drillingProgram, tripOutProgram, buildStandsProgram } from './sim/sequences.js';
 
 export const MODES = [
   { id: 'idle', name: 'Idle' },
   { id: 'drilling', name: 'Drilling' },
   { id: 'hoisting', name: 'Hoisting (trip out)' },
-  { id: 'pipe', name: 'Pipe Handling' },
+  { id: 'pipe', name: 'Pipe Handling (build stands)' },
+  { id: 'live', name: 'Live telemetry (external)' },
 ];
 const modeName = (id) => MODES.find((m) => m.id === id)?.name ?? id;
 
@@ -16,14 +17,14 @@ const PROGRAMS = {
   idle: idleProgram,
   drilling: drillingProgram,
   hoisting: tripOutProgram,
-  pipe: pipeHandlingProgram,
+  pipe: buildStandsProgram,
 };
 
 const START_MESSAGES = {
   idle: 'Idle: stopping rotation and pumps. Hoist and RPM are then under manual control.',
   drilling: 'Drilling: drill each stand down, then make a connection with the next stand from the setback.',
   hoisting: 'Hoisting: tripping out on elevators and racking stands back in the fingerboard.',
-  pipe: 'Pipe handling: picking up a single from the rack with the catwalk and the top-drive elevator.',
+  pipe: 'Pipe handling: building triple stands in the mousehole from singles off the rack, and racking them in the fingerboard.',
 };
 
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -47,6 +48,7 @@ export class RigAnimator {
     this.paused = false;
     this.onStatus = () => {};
     this.lastQ = this.state.q;
+    this.live = null;          // LiveDriver, set by main when telemetry is available
     this.applyView(0);
   }
 
@@ -56,6 +58,7 @@ export class RigAnimator {
 
   get operation() {
     if (this.seq.active) return this.seq.label;
+    if (this.mode === 'live' && this.live) return this.live.activity;
     return this.mode === 'idle' ? 'Manual control' : 'Stopped';
   }
 
@@ -72,11 +75,31 @@ export class RigAnimator {
       this.status(`Finishing the current operation safely before switching to ${modeName(mode)}…`, 'warn');
       return true;
     }
+    if (this.mode === 'live' && mode !== 'live') this.leaveLive();
     this.startMode(mode);
     return true;
   }
 
+  /** Give the rig back to the built-in procedures in a state they can start from. */
+  leaveLive() {
+    if (this.live && this.live.attached) this.live.detach(this.state);
+    deriveState(this.state);
+    this.hoistTarget = this.state.q;
+  }
+
   startMode(mode) {
+    if (mode === 'live') {
+      this.pending = null;
+      if (!this.live) {
+        this.mode = 'idle';
+        this.status('Live telemetry is not available in this build.', 'warn');
+        return;
+      }
+      this.mode = 'live';
+      this.live.attach(this.state);
+      this.status('Live telemetry: the model follows the external feed. Built-in procedures are suspended.', 'ok');
+      return;
+    }
     this.mode = mode;
     this.pending = null;
     this.status(START_MESSAGES[mode]);
@@ -95,9 +118,6 @@ export class RigAnimator {
     if (reason === 'halted') {
       this.mode = 'idle';
       this.status(s.halt, 'warn');
-    } else if (this.mode === 'pipe') {
-      this.mode = 'idle';
-      this.status('Single picked up and made up: the string is one joint longer. Press "Start pipe transfer" for another.', 'ok');
     } else if (this.mode === 'idle') {
       this.status('Idle: manual control of hoist and rotation.', 'info');
     } else {
@@ -121,6 +141,10 @@ export class RigAnimator {
 
   toggleRotation() {
     const s = this.state;
+    if (this.mode === 'live') {
+      this.status('Rotation follows the live feed in Live telemetry mode.', 'warn');
+      return false;
+    }
     if (this.seq.active) {
       this.status('Rotation is controlled by the running operation.', 'warn');
       return false;
@@ -144,11 +168,11 @@ export class RigAnimator {
   startTransfer() {
     const s = this.state;
     if (!this.seq.active && s.manualRotation && s.rpm > 0.5) {
-      this.status('Cannot start a pipe transfer while the string is rotating. Stop rotation first.', 'warn');
+      this.status('Cannot start building stands while the string is rotating. Stop rotation first.', 'warn');
       return false;
     }
     if (this.seq.active && this.mode === 'pipe') {
-      this.status('Pipe transfer already running.', 'warn');
+      this.status('Stand building is already running.', 'warn');
       return false;
     }
     return this.setMode('pipe');
@@ -156,6 +180,7 @@ export class RigAnimator {
 
   reset() {
     this.seq.abort();
+    if (this.live) this.live.attached = false;
     const rpmSet = this.state.rpmSet;
     const fresh = createState();
     Object.keys(this.state).forEach((k) => delete this.state[k]);
@@ -171,6 +196,17 @@ export class RigAnimator {
   /* -------------------------- per frame -------------------------- */
   update(rawDt) {
     const s = this.state;
+    if (this.mode === 'live' && this.live && !this.seq.active) {
+      // live feed runs in real time, independent of the sim-speed slider
+      const dtl = this.paused ? 0 : Math.min(rawDt, 1);
+      if (dtl > 0) {
+        this.live.update(s, dtl, performance.now());
+        tickRotation(s, dtl);
+        deriveState(s);
+      }
+      this.applyView(dtl);
+      return;
+    }
     const dt = this.paused ? 0 : Math.min(rawDt, 0.1) * this.simSpeed;
     if (dt > 0) {
       if (this.seq.active) {
@@ -196,6 +232,7 @@ export class RigAnimator {
     let bore = null;
     if (s.stand && (s.stand.latched || (s.elevator > 0.5 && s.stand.attach === 'none' && s.stand.axis.y < -0.999))) bore = s.stand.axis;
     else if (s.single && (s.single.latched || (s.elevator > 0.5 && s.single.attach === 'none' && s.single.axis.y < -0.999))) bore = s.single.axis;
+    else if (s.build && s.build.latched) bore = s.build.axis;
     else if (s.stringInElevator || (s.elevator > 0.5 && s.connected)) bore = DOWN;
     r.hoist.update(s.q, s.quillAngle, s.linkTilt, s.elevator, bore);
     const dq = s.q - this.lastQ;

@@ -220,3 +220,36 @@ button.btn:disabled { opacity: 0.4; cursor: not-allowed; }
   font-family: var(--mono);
   font-size: 11px;
 }
+
+/* ---------- Live telemetry ---------- */
+input.text {
+  flex: 1;
+  min-width: 0;
+  background: #141a20;
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  padding: 5px 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.row > button.btn { flex: 0 0 auto; min-width: 84px; }
+.tele { margin-top: 8px; font-family: var(--mono); font-size: 11px; }
+.tele .row { margin: 2px 0; }
+.tele .row span:first-child { color: var(--muted); }
+.q-good { color: var(--text); }
+.q-clamped { color: var(--accent); }
+.q-held, .q-stale { color: var(--warn); }
+.q-missing { color: #5c6772; }
+.tele-flags { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+.tele-flags .flag {
+  font-size: 10.5px;
+  line-height: 1.35;
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: #11161b;
+  border-left: 3px solid var(--muted);
+  color: var(--muted);
+}
+.tele-flags .flag.warn { border-left-color: var(--accent); color: #e6d39a; }
+.tele-flags .flag.error { border-left-color: var(--warn); color: #ffb08f; }

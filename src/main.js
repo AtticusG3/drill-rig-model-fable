@@ -15,6 +15,10 @@ import { buildFloorEquipment } from './rig/floorEquipment.js';
 import { ParticleSystem } from './site/particles.js';
 import { buildTraffic } from './site/vehicles.js';
 import { buildWildlife } from './site/wildlife.js';
+import { createDayNight } from './site/dayNight.js';
+import { TelemetryValidator } from './telemetry/validator.js';
+import { LiveDriver } from './telemetry/liveDriver.js';
+import { TelemetryClient } from './telemetry/client.js';
 import { createLabels } from './labels.js';
 import { RigAnimator } from './animations.js';
 import { createUI } from './ui.js';
@@ -23,12 +27,12 @@ import { beamBetween } from './geometry.js';
 import { MATERIALS } from './materials.js';
 
 const container = document.getElementById('app');
-const { renderer, labelRenderer, scene, camera, controls, cameraRig, setEnvironmentFrom } = createScene(container);
+const { renderer, labelRenderer, scene, camera, controls, cameraRig, sun, hemi, ambient, setEnvironmentFrom } = createScene(container);
 
 /* ---------------- Build the site ---------------- */
 const env = buildEnvironment();
 scene.add(env.group);
-setEnvironmentFrom(makeSkyEnvScene());
+const envSky = makeSkyEnvScene();
 
 const mast = buildMast();
 const sub = buildSubstructure();
@@ -60,14 +64,20 @@ const traffic = buildTraffic(particles);
 const wildlife = buildWildlife(particles);
 scene.add(traffic.group, wildlife.group, particles.points);
 const site = { enabled: true, time: 0 };
+const dayNight = createDayNight({ scene, renderer, sun, hemi, ambient, skyMat: env.skyMat, envSky, bakeEnvironment: setEnvironmentFrom, particles, wildlife });
+
+/* ---------------- Live telemetry ---------------- */
+const validator = new TelemetryValidator();
+const live = { validator, driver: new LiveDriver(validator), client: new TelemetryClient(validator) };
 
 const labels = createLabels(scene, hoist);
 const rig = {
-  scene, mast, sub, hoist, drawworks, pipe, mud, bop, aux, string, floor, thirdParty, traffic, wildlife, env, site,
+  scene, mast, sub, hoist, drawworks, pipe, mud, bop, aux, string, floor, thirdParty, traffic, wildlife, env, site, dayNight, live,
   obstacleRoots: [rigGroup, pipe.group, mud.group, aux.group, thirdParty.group],
 };
 const animator = new RigAnimator(rig);
 rig.animator = animator;
+animator.live = live.driver;
 const ui = createUI({ animator, rig, cameraRig, labels, renderer });
 
 // keyboard camera presets
@@ -87,6 +97,7 @@ function stepSite(sdt) {
   traffic.update(sdt, site.time);
   if (site.enabled) wildlife.update(sdt, site.time);
   particles.update(sdt);
+  dayNight.update(sdt);
 }
 site.step = stepSite;
 

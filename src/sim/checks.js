@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { LAYOUT as L } from '../layout.js';
-import { createState, getElevatorPoint, tubularBottom, troughFrame, slotPos, STUMP_Y, SAVER, STAND } from './rigState.js';
+import { createState, getElevatorPoint, tubularBottom, troughFrame, slotPos, STUMP_Y, SAVER, STAND, MOUSE_Z, MOUSE_TOP_Y } from './rigState.js';
 import { simulate } from './sequencer.js';
-import { drillingProgram, tripOutProgram, pipeHandlingProgram } from './sequences.js';
+import { drillingProgram, tripOutProgram, buildStandsProgram } from './sequences.js';
 
 const fmt = (n) => (Math.round(n * 1000) / 1000).toString();
 
@@ -45,7 +45,7 @@ function tickRules(s, prev, ctx) {
   if (!supported) v.push('drill string unsupported (not made up, not in slips, not latched)');
   if (s.pumpsOn && !s.connected) v.push('pumps running with the top drive broken out');
   if (s.rpm > 0.5 && !(s.connected && s.slips < 0.01)) v.push('rotating while in the slips or broken out');
-  if (s.single && s.rpm > 0.5) v.push('rotating during pipe transfer');
+  if ((s.single || s.build) && s.rpm > 0.5) v.push('rotating during pipe transfer');
   if (E.y < L.elevatorMinY - 1e-3) v.push(`elevator at ${fmt(E.y)} m below rotary clearance`);
   if (!s.connected && !s.stringInElevator && s.q - SAVER < s.stringTopY - 1e-3) v.push('saver sub driven into the string');
   // trough must clear the drill floor
@@ -54,7 +54,7 @@ function tickRules(s, prev, ctx) {
     const end = ctx.p.copy(f.T).addScaledVector(f.u, L.troughLength);
     if (Math.abs(end.z) < L.floorZ / 2 && end.y < L.floorY + 0.1) v.push('catwalk trough end below deck level inside the floor footprint');
   }
-  for (const key of ['stand', 'single']) {
+  for (const key of ['stand', 'single', 'build']) {
     const t = s[key];
     if (!t) { ctx[key] = null; continue; }
     if (Math.abs(t.axis.length() - 1) > 1e-6) v.push(`${key} axis not unit length`);
@@ -67,9 +67,13 @@ function tickRules(s, prev, ctx) {
     }
     for (let i = 0; i <= 10; i++) {
       const p = ctx.p.copy(t.top).addScaledVector(t.axis, (t.len * i) / 10);
-      if (Math.abs(p.x) < L.floorX / 2 && Math.abs(p.z) < L.floorZ / 2 && p.y < L.floorY + 0.04) { v.push(`${key} penetrates the drill floor`); break; }
+      const inMousehole = Math.hypot(p.x, p.z - MOUSE_Z) < 0.12;
+      if (!inMousehole && Math.abs(p.x) < L.floorX / 2 && Math.abs(p.z) < L.floorZ / 2 && p.y < L.floorY + 0.04) { v.push(`${key} penetrates the drill floor`); break; }
     }
     if (Math.hypot(bottom.x, bottom.z) < 0.25 && bottom.y < STUMP_Y - 1e-3) v.push(`${key} pin driven into the stump`);
+    // a joint over the mousehole must not be driven into the pipe already standing in it
+    if (key === 'single' && s.build && Math.hypot(bottom.x, bottom.z - MOUSE_Z) < 0.25 && bottom.y < s.build.top.y - 1e-3) v.push('joint pin driven into the pipe in the mousehole');
+    if (key === 'build' && t.attach === 'mousehole' && Math.abs(t.top.y - MOUSE_TOP_Y) > 1e-6) v.push('pipe in the mousehole is not on its landing');
     // a handled stand must not pass through stands still racked in the setback
     for (let i = 0; i < s.setback.length; i++) {
       if (!s.setback[i] || i === t.slot) continue;
@@ -80,12 +84,12 @@ function tickRules(s, prev, ctx) {
     }
     if (t.attach === 'none' && Math.hypot(t.top.x, t.top.z) < 0.01 && Math.abs(t.axis.y + 1) < 1e-6 && s.q - SAVER < t.top.y - 1e-3) v.push(`saver sub driven into the ${key}`);
     const last = ctx[key];
-    if (last) {
+    if (last && last.len === t.len) {
       const step = Math.max(last.top.distanceTo(t.top), last.bottom.distanceTo(bottom));
       ctx.maxStep = Math.max(ctx.maxStep, step);
       if (step > 0.6) v.push(`${key} jumped ${fmt(step)} m in one tick`);
     }
-    ctx[key] = { top: t.top.clone(), bottom: bottom.clone() };
+    ctx[key] = { top: t.top.clone(), bottom: bottom.clone(), len: t.len };
   }
   return v;
 }
@@ -94,7 +98,7 @@ function runProgram(name, program, { until, maxTime = 400, prep, state, dt = 1 /
   const s = state || createState();
   if (prep) prep(s);
   const startSetback = s.setback.filter(Boolean).length;
-  const ctx = { E: new THREE.Vector3(), b: new THREE.Vector3(), p: new THREE.Vector3(), q: new THREE.Vector3(), f: undefined, stand: null, single: null, maxStep: 0, maxSeatErr: 0, minRackGap: Infinity };
+  const ctx = { E: new THREE.Vector3(), b: new THREE.Vector3(), p: new THREE.Vector3(), q: new THREE.Vector3(), f: undefined, stand: null, single: null, build: null, maxStep: 0, maxSeatErr: 0, minRackGap: Infinity };
   ctx.f = troughFrame(0);
   const violations = [];
   let steps = 0;
@@ -148,16 +152,21 @@ export function runProcedureChecks() {
     });
   }
 
-  const pipe = runProgram('pipe', pipeHandlingProgram);
+  const pipe = runProgram('pipe', buildStandsProgram, {
+    maxTime: 900,
+    until: (st, seq) => st.standsBuilt >= 1 && seq.step && seq.step.safePoint,
+  });
   {
     const s = pipe.s;
-    const pass = pipe.violations.length === 0 && pipe.result.reason === 'done' && s.singlesAdded === 1 && s.connected && s.slips === 0 && s.catwalk === 0 && s.roughneck === 0 && !s.single;
+    const setbackDelta = s.setback.filter(Boolean).length - pipe.startSetback;
+    const pass = pipe.violations.length === 0 && pipe.result.reason === 'until' && s.standsBuilt === 1 && setbackDelta === 1 && s.rackPicked === 4
+      && s.slips === 1 && !s.connected && s.roughneck === 0 && !s.build && !s.stand;
     out.push({
-      name: 'Pipe transfer uses the elevator, path continuous & collision-free',
+      name: 'Stand building: rack -> catwalk -> elevator -> mousehole (3 joints) -> fingerboard, continuous & collision-free',
       pass,
       detail: pass
-        ? `${pipe.labels.length} steps in ${fmt(pipe.result.time)} s, max pipe step ${fmt(pipe.ctx.maxStep)} m/tick, elevator seat error ${fmt(pipe.ctx.maxSeatErr)} m, deck penetrations 0`
-        : `violations: ${pipe.violations.join(' | ') || 'none'}; result ${pipe.result.reason}, singles ${s.singlesAdded}`,
+        ? `${pipe.labels.length} steps in ${fmt(pipe.result.time)} s, max pipe step ${fmt(pipe.ctx.maxStep)} m/tick, elevator seat error ${fmt(pipe.ctx.maxSeatErr)} m, closest racked stand ${fmt(pipe.ctx.minRackGap)} m`
+        : `violations: ${pipe.violations.join(' | ') || 'none'}; result ${pipe.result.reason}, built ${s.standsBuilt}, setback change ${setbackDelta}, joints taken ${s.rackPicked}`,
     });
   }
   return { results: out, runs: { drill, trip, pipe } };
