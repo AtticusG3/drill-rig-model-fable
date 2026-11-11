@@ -15,6 +15,17 @@ export const CAMERA_PRESETS = [
   { id: 'gate', name: 'Gate & Access Road', position: [36, 6, 96], target: [24, 2.5, 48] },
 ];
 
+/** Phone / tablet: touch is the primary input. Drives lighter render settings and the compact layout. */
+export const IS_TOUCH = typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+
+/**
+ * Presets are framed for a landscape screen. On a narrow (portrait) screen the camera backs
+ * away along its line of sight so the same width of the site stays in view.
+ */
+export function portraitFit(aspect) {
+  return aspect >= 1 ? 1 : Math.min(1.9, 0.6 + 0.4 / aspect);
+}
+
 function easeInOut(t) {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
@@ -35,8 +46,8 @@ export class CameraRig {
   flyTo(preset, duration = 1.4) {
     this.fromPos.copy(this.camera.position);
     this.fromTarget.copy(this.controls.target);
-    this.toPos.fromArray(preset.position);
     this.toTarget.fromArray(preset.target);
+    this.toPos.fromArray(preset.position).sub(this.toTarget).multiplyScalar(portraitFit(this.camera.aspect)).add(this.toTarget);
     this.duration = duration;
     this.t = 0;
     this.active = true;
@@ -57,11 +68,14 @@ export class CameraRig {
 }
 
 export function createScene(container) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // phones: high-density screens already hide aliasing, so skip MSAA and cap the render resolution
+  const dpr = window.devicePixelRatio || 1;
+  const maxPixelRatio = IS_TOUCH ? Math.min(dpr, 1.5) : Math.min(dpr, 2);
+  const renderer = new THREE.WebGLRenderer({ antialias: !(IS_TOUCH && dpr >= 2), powerPreference: 'high-performance' });
+  renderer.setPixelRatio(maxPixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = IS_TOUCH ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -92,7 +106,7 @@ export function createScene(container) {
 
   const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.5, 2500);
   const p0 = CAMERA_PRESETS[0];
-  camera.position.fromArray(p0.position);
+  camera.position.fromArray(p0.position).sub(new THREE.Vector3().fromArray(p0.target)).multiplyScalar(portraitFit(camera.aspect)).add(new THREE.Vector3().fromArray(p0.target));
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.fromArray(p0.target);
@@ -107,7 +121,7 @@ export function createScene(container) {
   const sun = new THREE.DirectionalLight(0xfff0d8, 3.1);
   sun.position.set(55, 95, 40);       // high sun from the +X/+Z quadrant: rakes the lattice and floor
   sun.castShadow = true;
-  sun.shadow.mapSize.set(4096, 4096);
+  sun.shadow.mapSize.set(IS_TOUCH ? 2048 : 4096, IS_TOUCH ? 2048 : 4096);
   sun.shadow.camera.near = 10;
   sun.shadow.camera.far = 320;
   sun.shadow.camera.left = -85;
@@ -130,11 +144,40 @@ export function createScene(container) {
     const w = window.innerWidth;
     const h = window.innerHeight;
     camera.aspect = w / h;
+    // rotating the phone: keep the same framing by moving the camera along its line of sight
+    const fit = portraitFit(camera.aspect);
+    if (fit !== lastFit) {
+      if (!cameraRig.active) camera.position.sub(controls.target).multiplyScalar(fit / lastFit).add(controls.target);
+      lastFit = fit;
+    }
+    // keep the rig centred in the part of the screen not covered by the open panel
+    if (viewShiftX > 0 || viewShiftY > 0) camera.setViewOffset(w, h, Math.round(viewShiftX), Math.round(viewShiftY), w, h);
+    else camera.clearViewOffset();
     camera.updateProjectionMatrix();
     renderer.setSize(w, h);
     labelRenderer.setSize(w, h);
   }
+  let viewShiftX = 0;
+  let viewShiftY = 0;
+  let lastFit = portraitFit(camera.aspect);
+  /**
+   * Shift the rendered view left by `x` and up by `y` CSS pixels: half the size of a panel
+   * covering the right or the bottom of the screen.
+   */
+  function setViewShift(x, y) {
+    if (Math.abs(x - viewShiftX) < 1 && Math.abs(y - viewShiftY) < 1) return;
+    viewShiftX = x;
+    viewShiftY = y;
+    resize();
+  }
+  /** Render-resolution scale (1 = the device cap). Used by the adaptive quality control on phones. */
+  function setResolutionScale(k) {
+    renderer.setPixelRatio(Math.max(0.6, maxPixelRatio * k));
+    resize();
+  }
   window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
 
-  return { renderer, labelRenderer, scene, camera, controls, sun, hemi, ambient, cameraRig, resize, setEnvironmentFrom };
+  return { renderer, labelRenderer, scene, camera, controls, sun, hemi, ambient, cameraRig, resize, setEnvironmentFrom, setViewShift, setResolutionScale };
 }

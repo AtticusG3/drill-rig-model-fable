@@ -1,5 +1,5 @@
 import { LAYOUT } from './layout.js';
-import { CAMERA_PRESETS } from './scene.js';
+import { CAMERA_PRESETS, IS_TOUCH } from './scene.js';
 import { MODES } from './animations.js';
 import { setWireframe } from './materials.js';
 import { runValidation } from './validation.js';
@@ -72,15 +72,35 @@ export function createUI({ animator, rig, cameraRig, labels, renderer }) {
 
   const header = el('div', 'panel-header');
   header.append(el('h1', null, 'Rig Control'));
+  const headerOp = el('span', 'op', '');          // current operation, shown while the panel is collapsed
+  header.append(headerOp);
   const collapse = el('button', null, '–');
+  collapse.setAttribute('aria-label', 'Show or hide the control panel');
   header.append(collapse);
   root.append(header);
   const body = el('div', 'panel-body');
   root.append(body);
-  collapse.addEventListener('click', () => {
-    root.classList.toggle('collapsed');
-    collapse.textContent = root.classList.contains('collapsed') ? '+' : '–';
-  });
+
+  // small screens: the panel is a bottom sheet (or a side sheet on a landscape phone) and starts closed
+  const compact = window.matchMedia('(max-width: 720px), (pointer: coarse) and (max-height: 520px)');
+  const portraitSheet = window.matchMedia('(max-width: 720px)');
+  let layoutListener = () => {};
+  function notifyLayout() {
+    // size of the open sheet, so the 3D view can be centred in the part of the screen it leaves free
+    const open = compact.matches && !root.classList.contains('collapsed');
+    const r = root.getBoundingClientRect();
+    if (!open) layoutListener(0, 0);
+    else if (portraitSheet.matches) layoutListener(0, r.height / 2);
+    else layoutListener(r.width / 2, 0);
+  }
+  function setCollapsed(on) {
+    root.classList.toggle('collapsed', on);
+    collapse.textContent = on ? '+' : '–';
+    notifyLayout();
+  }
+  header.addEventListener('click', () => setCollapsed(!root.classList.contains('collapsed')));
+  if (compact.matches) setCollapsed(true);
+  window.addEventListener('resize', notifyLayout);
 
   /* ---------------- Rig controls ---------------- */
   const rigSec = el('div', 'section');
@@ -131,7 +151,9 @@ export function createUI({ animator, rig, cameraRig, labels, renderer }) {
   viewSec.append(checkbox('Show mud system', true, (on) => { rig.mud.group.visible = on; }));
   viewSec.append(checkbox('Show equipment labels', labels.visible, (on) => labels.setVisible(on)));
   viewSec.append(checkbox('Wireframe mode', false, (on) => setWireframe(on)));
-  viewSec.append(checkbox('Shadows', true, (on) => { renderer.shadowMap.enabled = on; rig.scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); }));
+  const setShadows = (on) => { renderer.shadowMap.enabled = on; rig.scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); };
+  const shadowBox = checkbox('Shadows', true, setShadows);
+  viewSec.append(shadowBox);
   body.append(viewSec);
 
   /* ---------------- Site activity ---------------- */
@@ -266,8 +288,9 @@ export function createUI({ animator, rig, cameraRig, labels, renderer }) {
 
   const hint = el('div');
   hint.id = 'hint';
-  hint.textContent = 'Drag: orbit · Right-drag: pan · Wheel: zoom · Keys 1–9: camera presets';
+  hint.textContent = IS_TOUCH ? 'One finger: orbit · Two fingers: pan and zoom · Tap the bar for controls' : 'Drag: orbit · Right-drag: pan · Wheel: zoom · Keys 1–9: camera presets';
   document.body.append(hint);
+  if (IS_TOUCH) setTimeout(() => hint.classList.add('faded'), 8000);
 
   /* ---------------- sync + per-frame diagnostics ---------------- */
   function sync() {
@@ -295,6 +318,7 @@ export function createUI({ animator, rig, cameraRig, labels, renderer }) {
       hoist.val.textContent = hoist.format(manual ? animator.hoistTarget : s.q);
     }
     opLine.textContent = `▶ ${animator.operation}`;
+    headerOp.textContent = animator.operation;
     if (now - lastDiag > 250) {
       lastDiag = now;
       const fps = acc > 0 ? frames / acc : 0;
@@ -321,5 +345,12 @@ export function createUI({ animator, rig, cameraRig, labels, renderer }) {
     }
   }
 
-  return { update, sync, validationLine, setCameraPreset: (id) => { cam.select.value = id; } };
+  return {
+    update,
+    sync,
+    validationLine,
+    setCameraPreset: (id) => { cam.select.value = id; },
+    setLayoutListener: (fn) => { layoutListener = fn; notifyLayout(); },
+    setShadows: (on) => { shadowBox.querySelector('input').checked = on; setShadows(on); },
+  };
 }

@@ -127,6 +127,14 @@ wait for the next safe point (string made up, or string in the slips with an emp
 | *Traffic, livestock and tumbleweeds* | Turns the ambient site life on or off |
 | *Call water truck* / *Call fuel truck* | Sends that truck in now (one truck on site at a time) |
 
+**Phones and tablets.** One finger orbits, two fingers pan and zoom. On a narrow screen the control
+panel is a bottom sheet (a side sheet on a landscape phone) that starts closed; its bar shows the
+current operation, and tapping it opens the controls. The 3D view re-centres on the part of the
+screen the open panel leaves free, and the camera backs off in portrait so the same width of the
+site stays in view. On touch devices the render resolution is capped at 1.5x, shadows use a 2048
+map, and if the frame rate stays under 24 fps the resolution steps down (and finally shadows
+switch off; the *Shadows* box turns them back on).
+
 ## 6. Validation (runs at start-up; 18 checks)
 
 Spatial checks on the scene: well-centre alignment; crown above block at max hoist; block above

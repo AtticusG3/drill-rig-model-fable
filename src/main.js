@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { createScene, CAMERA_PRESETS } from './scene.js';
+import { createScene, CAMERA_PRESETS, IS_TOUCH } from './scene.js';
 import { buildEnvironment, makeSkyEnvScene } from './environment.js';
 import { buildMast } from './rig/mast.js';
 import { buildSubstructure } from './rig/substructure.js';
@@ -27,7 +27,7 @@ import { beamBetween } from './geometry.js';
 import { MATERIALS } from './materials.js';
 
 const container = document.getElementById('app');
-const { renderer, labelRenderer, scene, camera, controls, cameraRig, sun, hemi, ambient, setEnvironmentFrom } = createScene(container);
+const { renderer, labelRenderer, scene, camera, controls, cameraRig, sun, hemi, ambient, setEnvironmentFrom, setViewShift, setResolutionScale } = createScene(container);
 
 /* ---------------- Build the site ---------------- */
 const env = buildEnvironment();
@@ -102,6 +102,29 @@ function stepSite(sdt) {
 }
 site.step = stepSite;
 
+ui.setLayoutListener(setViewShift);
+
+/* ---------------- Adaptive quality (touch devices) ----------------
+ * If the frame rate stays low, step the render resolution down, and as a last
+ * resort turn shadows off. One-way: it never steps back up mid-session. */
+const QUALITY_STEPS = [1, 0.85, 0.7];
+const quality = { level: 0, fps: 60, since: 0, shadowsOff: false };
+function adaptQuality(dt, now) {
+  if (!IS_TOUCH || dt <= 0 || document.hidden) return;
+  quality.fps += (1 / dt - quality.fps) * Math.min(1, dt * 1.5);
+  if (now < 6000 || now - quality.since < 3500) return;
+  if (quality.fps < 24) {
+    quality.since = now;
+    if (quality.level < QUALITY_STEPS.length - 1) {
+      quality.level++;
+      setResolutionScale(QUALITY_STEPS[quality.level]);
+    } else if (!quality.shadowsOff) {
+      quality.shadowsOff = true;
+      ui.setShadows(false);
+    }
+  }
+}
+
 /* ---------------- Render loop ---------------- */
 const clock = new THREE.Clock();
 let validated = false;
@@ -119,6 +142,7 @@ function frame() {
   renderer.render(scene, camera);
   labelRenderer.render(scene, camera);
   ui.update(dt, performance.now());
+  adaptQuality(dt, performance.now());
   if (!validated) {
     validated = true;
     const results = runValidation(rig);
@@ -132,4 +156,4 @@ frame();
 
 // expose for console inspection / scripted testing
 window.rig = rig;
-window.rigApp = { cameraRig, presets: CAMERA_PRESETS, ui, renderer, camera, controls, particles };
+window.rigApp = { cameraRig, presets: CAMERA_PRESETS, ui, renderer, camera, controls, particles, quality };

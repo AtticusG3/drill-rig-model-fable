@@ -253,3 +253,113 @@ input.text {
 }
 .tele-flags .flag.warn { border-left-color: var(--accent); color: #e6d39a; }
 .tele-flags .flag.error { border-left-color: var(--warn); color: #ffb08f; }
+
+/* ---------- Collapsed header shows the current operation ---------- */
+.panel-header { cursor: pointer; user-select: none; -webkit-user-select: none; }
+.panel-header .op {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  max-width: 260px;
+  margin: 0 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #cfe6ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#ui.collapsed .panel-header .op { display: block; }
+#ui.collapsed .panel-header { border-bottom: none; }
+#hint { transition: opacity 0.8s; pointer-events: none; }
+#hint.faded { opacity: 0; }
+
+/* ---------- Touch and small screens ---------- */
+html, body { height: 100dvh; overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
+body { position: fixed; inset: 0; -webkit-tap-highlight-color: transparent; }
+#app canvas { touch-action: none; }             /* one finger orbits, two fingers pan / zoom the camera, never the page */
+#ui { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+
+@media (pointer: coarse) {
+  /* finger-sized controls; 16 px text in fields stops iOS zooming the page on focus */
+  #ui { font-size: 14px; }
+  .panel-header { padding: 0 8px 0 14px; min-height: 48px; }
+  .panel-header h1 { font-size: 13px; }
+  .panel-header button { width: 40px; height: 40px; font-size: 20px; border: none; }
+  .panel-header .op { font-size: 12px; }
+  .section { padding: 12px 14px; }
+  .section h2 { font-size: 11px; margin-bottom: 10px; }
+  .row { margin: 10px 0; min-height: 36px; }
+  select, input.text { font-size: 16px; padding: 8px; min-height: 42px; }
+  button.btn { font-size: 13px; padding: 10px; min-height: 44px; }
+  .row > button.btn { min-width: 104px; }
+  .check { margin: 0; padding: 9px 0; gap: 12px; }
+  .check input { width: 22px; height: 22px; }
+  input[type="range"] { height: 6px; margin: 12px 0; }
+  input[type="range"]::-webkit-slider-thumb { width: 26px; height: 26px; }
+  input[type="range"]::-moz-range-thumb { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); border: 2px solid #111; }
+  .status-line, .status-line.op { font-size: 12.5px; padding: 8px 10px; }
+  .diag, .tele { font-size: 12.5px; }
+  .diag .row, .tele .row { margin: 0; min-height: 26px; }
+  .tele-flags .flag { font-size: 12px; padding: 6px 8px; }
+  .eq-label { font-size: 10px; padding: 1px 5px; }
+}
+
+/* phone in portrait (and any narrow window): the panel is a bottom sheet */
+@media (max-width: 720px) {
+  #ui {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 58dvh;
+    border-radius: 14px 14px 0 0;
+    border-width: 1px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  #ui.collapsed { width: auto; }
+  .panel-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    border-radius: 14px 14px 0 0;
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(8px, env(safe-area-inset-right));
+  }
+  .panel-header .op { max-width: none; }
+  .section { padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
+  #hint {
+    top: calc(10px + env(safe-area-inset-top));
+    bottom: auto;
+    left: 10px;
+    right: 10px;
+    text-align: center;
+  }
+  #loading { font-size: 14px; padding: 0 24px; text-align: center; }
+}
+
+/* phone in landscape: a side sheet that leaves the left of the screen for the rig */
+@media (pointer: coarse) and (max-height: 520px) and (min-width: 721px) {
+  #ui {
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(340px, 46vw);
+    max-height: 100dvh;
+    border-radius: 0;
+    border-width: 0 0 0 1px;
+    padding-right: env(safe-area-inset-right);
+  }
+  #ui.collapsed {
+    bottom: auto;
+    top: calc(8px + env(safe-area-inset-top));
+    right: calc(8px + env(safe-area-inset-right));
+    width: min(340px, 46vw);
+    border-radius: 10px;
+    border-width: 1px;
+    padding-right: 0;
+  }
+  .panel-header { position: sticky; top: 0; z-index: 2; }
+  #hint { left: calc(10px + env(safe-area-inset-left)); bottom: calc(8px + env(safe-area-inset-bottom)); }
+}
