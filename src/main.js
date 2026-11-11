@@ -78,6 +78,7 @@ const rig = {
 const animator = new RigAnimator(rig);
 rig.animator = animator;
 animator.live = live.driver;
+animator.setMode('drilling');     // start drilling ahead; Idle and the other modes are in the panel
 const ui = createUI({ animator, rig, cameraRig, labels, renderer });
 
 // keyboard camera presets

@@ -114,7 +114,7 @@ wait for the next safe point (string made up, or string in the slips with an emp
 |---|---|
 | Left-drag / right-drag / wheel | Orbit / pan / zoom |
 | Keys `1`–`9` or *Camera preset* | Overview, Front, Side, Top, Drill Floor, Pipe Handling, Mud System, Service Cabins, Gate & Access Road |
-| *Mode* | Idle (manual), Drilling, Hoisting (trip out), Pipe Handling (build stands), Live telemetry |
+| *Mode* | Drilling (default at start-up), Idle (manual), Hoisting (trip out), Pipe Handling (build stands), Live telemetry |
 | *Hoist position* | Manual hoist target, Idle only (string made up: 9.35–39.8 m) |
 | *RPM set-point* | 0–200 rpm used when drilling or rotating manually |
 | *Sim speed* / *Pause* | 0.25×–4× simulation time, freeze |

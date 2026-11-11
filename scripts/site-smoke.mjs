@@ -59,6 +59,7 @@ createLabels(scene, hoist);
 const site = { enabled: true, time: 0 };
 const rig = { scene, mast, sub, hoist, drawworks, pipe, mud, bop, aux, string, floor, thirdParty, traffic, wildlife, env, site, obstacleRoots: [rigGroup, pipe.group, mud.group, aux.group, thirdParty.group] };
 const animator = new RigAnimator(rig); rig.animator = animator;
+animator.setMode('drilling');     // same start-up state as the app
 
 // run 12 simulated minutes of site life at 30 Hz
 let lastStatus = '';

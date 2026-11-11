@@ -62,7 +62,7 @@ export function createLabels(scene, hoist) {
     group.visible = on;
     dyn.visible = on;
   };
-  setVisible(true);
+  setVisible(false);     // labels start hidden; the View panel turns them on
 
   return { group, dyn, setVisible, get visible() { return visible; } };
 }

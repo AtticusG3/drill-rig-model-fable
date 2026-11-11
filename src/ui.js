@@ -129,7 +129,7 @@ export function createUI({ animator, rig, cameraRig, labels, renderer }) {
   viewSec.append(checkbox('Show structural bracing', true, (on) => { rig.mast.bracing.visible = on; rig.sub.bracing.visible = on; }));
   viewSec.append(checkbox('Show drill string', true, (on) => { rig.string.group.visible = on; }));
   viewSec.append(checkbox('Show mud system', true, (on) => { rig.mud.group.visible = on; }));
-  viewSec.append(checkbox('Show equipment labels', true, (on) => labels.setVisible(on)));
+  viewSec.append(checkbox('Show equipment labels', labels.visible, (on) => labels.setVisible(on)));
   viewSec.append(checkbox('Wireframe mode', false, (on) => setWireframe(on)));
   viewSec.append(checkbox('Shadows', true, (on) => { renderer.shadowMap.enabled = on; rig.scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; }); }));
   body.append(viewSec);
